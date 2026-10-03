@@ -335,19 +335,36 @@ struct JcodeTarget {
 /// simplify: default distro only; a per-distro picker is the upgrade path.
 fn jcode_target() -> Option<JcodeTarget> {
     let exe = std::env::current_exe().ok()?;
-    #[cfg(windows)]
-    {
-        if let Some((distro, home)) = wsl_default_home() {
-            let unc = format!(r"\\wsl.localhost\{}{}", distro, home.replace('/', r"\"));
-            let config = PathBuf::from(unc).join(".jcode").join("config.toml");
-            if config.parent().map(|d| d.is_dir()).unwrap_or(false) {
-                let linux_exe = windows_to_wsl_path(&exe.to_string_lossy());
-                return Some(JcodeTarget { config, command: crate::jcode::hook_command(&linux_exe, true) });
+    let (home, via_wsl) = jcode_home()?;
+    let config = home.join(".jcode").join("config.toml");
+    let command = if via_wsl {
+        crate::jcode::hook_command(&windows_to_wsl_path(&exe.to_string_lossy()), true)
+    } else {
+        crate::jcode::hook_command(&exe.to_string_lossy(), false)
+    };
+    Some(JcodeTarget { config, command })
+}
+
+/// The home directory jcode uses, as a path this process can open, plus
+/// whether it is inside WSL. Prefers the default WSL distro's home when it has
+/// a `.jcode` folder (reached as `\\wsl.localhost\<distro>\<home>`), else the
+/// native home. Resolved once: `wsl.exe` costs ~200 ms and the answer doesn't
+/// change while the app runs.
+pub fn jcode_home() -> Option<(PathBuf, bool)> {
+    static HOME: std::sync::OnceLock<Option<(PathBuf, bool)>> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        #[cfg(windows)]
+        {
+            if let Some((distro, home)) = wsl_default_home() {
+                let unc = PathBuf::from(format!(r"\\wsl.localhost\{}{}", distro, home.replace('/', r"\")));
+                if unc.join(".jcode").is_dir() {
+                    return Some((unc, true));
+                }
             }
         }
-    }
-    let config = dirs::home_dir()?.join(".jcode").join("config.toml");
-    Some(JcodeTarget { config, command: crate::jcode::hook_command(&exe.to_string_lossy(), false) })
+        dirs::home_dir().map(|h| (h, false))
+    })
+    .clone()
 }
 
 /// (distro, $HOME) of the default WSL distro, via `wsl.exe`. None without WSL.
