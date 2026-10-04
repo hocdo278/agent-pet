@@ -367,12 +367,39 @@ fn get_pet_visible(app: tauri::AppHandle) -> bool {
 
 /// Show the popover (the macOS menu-bar popover equivalent) near the cursor.
 fn show_popover(app: &tauri::AppHandle) {
-    let win = match app.get_webview_window("popover") {
+    show_transient(app, "popover", "popover.html", 430.0, "popover-shown", None);
+}
+
+/// Show the pet's stats card (the macOS right-click PetStatsView) near the
+/// cursor. `pet` is the slug of the pet that was right-clicked (split-pet
+/// windows each raise their own pet).
+fn show_stats(app: &tauri::AppHandle, pet: Option<String>) {
+    let url = match &pet {
+        Some(p) => format!("stats.html?pet={}", url_component(p)),
+        None => "stats.html".to_string(),
+    };
+    show_transient(app, "stats", &url, 760.0, "stats-shown", pet);
+}
+
+/// Percent-encodes everything but unreserved URL characters.
+fn url_component(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// A frameless, always-on-top window that hides when it loses focus, placed
+/// near the cursor and clamped onto that monitor. Created on first use.
+fn show_transient(app: &tauri::AppHandle, label: &str, url: &str, base_h: f64, event: &str, payload: Option<String>) {
+    let win = match app.get_webview_window(label) {
         Some(w) => w,
         None => {
-            match WebviewWindowBuilder::new(app, "popover", WebviewUrl::App("popover.html".into()))
+            match WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title("AgentPet")
-                .inner_size(300.0, 430.0)
+                .inner_size(if label == "stats" { 316.0 } else { 300.0 }, base_h)
                 .decorations(false)
                 .transparent(true)
                 .always_on_top(true)
@@ -383,7 +410,7 @@ fn show_popover(app: &tauri::AppHandle) {
                 .build()
             {
                 Ok(w) => {
-                    dlog("popover: window created");
+                    dlog(&format!("{label}: window created"));
                     // Transient popover: losing focus hides it (Rust-side net,
                     // independent of the webview's own blur listener).
                     let wh = w.clone();
@@ -395,7 +422,7 @@ fn show_popover(app: &tauri::AppHandle) {
                     w
                 }
                 Err(e) => {
-                    dlog(&format!("popover: BUILD FAILED: {e}"));
+                    dlog(&format!("{label}: BUILD FAILED: {e}"));
                     return;
                 }
             }
@@ -404,7 +431,11 @@ fn show_popover(app: &tauri::AppHandle) {
     // Place near the cursor, clamped onto the monitor under it.
     if let Ok(cur) = app.cursor_position() {
         let sf = win.scale_factor().unwrap_or(1.0);
-        let (w, h) = (300.0 * sf, 430.0 * sf);
+        // The card resizes itself to its content; use the current size once known.
+        let (w, h) = match win.outer_size() {
+            Ok(sz) if sz.height > 50 => (sz.width as f64, sz.height as f64),
+            _ => (300.0 * sf, base_h * sf),
+        };
         let mut x = cur.x - w / 2.0;
         let mut y = cur.y - h - 12.0; // prefer above the cursor (tray at bottom)
         if let Ok(Some(mon)) = app.monitor_from_point(cur.x, cur.y) {
@@ -420,7 +451,13 @@ fn show_popover(app: &tauri::AppHandle) {
     }
     let _ = win.show();
     let _ = win.set_focus();
-    let _ = win.emit("popover-shown", ());
+    let _ = win.emit(event, payload);
+}
+
+#[tauri::command]
+async fn open_stats(app: tauri::AppHandle, pet: Option<String>) {
+    dlog("open_stats called");
+    std::thread::spawn(move || show_stats(&app, pet));
 }
 
 #[tauri::command]
@@ -479,6 +516,7 @@ pub fn run() {
             set_pet_visible,
             get_pet_visible,
             open_popover,
+            open_stats,
             log_debug,
             set_hit_rect,
             play_sound,
@@ -626,15 +664,17 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
-                    // Left-click on the tray icon opens Settings; the pet's
-                    // right-click popover covers the quick controls.
+                    // Left-click on the tray icon opens the quick popover (agents,
+                    // show pet, size); right-clicking the pet opens its stats card.
                     if let tauri::tray::TrayIconEvent::Click {
                         button: tauri::tray::MouseButton::Left,
                         button_state: tauri::tray::MouseButtonState::Up,
                         ..
                     } = event
                     {
-                        open_settings_impl(tray.app_handle().clone());
+                        // Window creation must not run on the event-loop callback.
+                        let app = tray.app_handle().clone();
+                        std::thread::spawn(move || show_popover(&app));
                     }
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
