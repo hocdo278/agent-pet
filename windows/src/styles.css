@@ -822,6 +822,8 @@ body.pop {
 .pop-empty { padding: 4px 14px 10px; }
 .pop-limit { padding: 2px 14px 10px; }
 /* ---- pet stats card (mac PetStatsView) ---- */
+/* Opaque: text from windows behind the 0.97 popover background read through. */
+.sc-card { background: #28282c; }
 .sc-card #sc-body { display: flex; flex-direction: column; gap: 11px; padding: 14px 14px 10px; }
 .sc-head { display: flex; align-items: center; gap: 10px; }
 .sc-thumbwrap { width: 46px; height: 46px; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; }
