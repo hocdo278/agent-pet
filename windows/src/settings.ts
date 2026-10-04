@@ -179,17 +179,7 @@ function renderLimits(providers: limits.LimitProvider[]) {
   const escH = (s: string) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
   list.innerHTML = providers.map((p) => {
     const on = limits.isVisible(p.id);
-    const rows = on ? p.windows.map((w) => {
-      const used = Math.min(1, Math.max(0, 1 - w.fraction_left));
-      const color = limits.barColor(used);
-      const rst = limits.resetText(w.resets_at);
-      return `<div class="limit-row">
-        <div class="limit-head"><span class="lbl">${escH(limits.title(w))}</span>
-          <span class="pct" style="color:${color}">${escH(t("%d%% used").replace("%d", String(Math.round(used * 100))).replace("%%", "%"))}</span>
-          ${rst ? `<span class="rst">· ${escH(rst)}</span>` : ""}</div>
-        <div class="limit-bar"><div style="width:${(used * 100).toFixed(1)}%;background:${color}"></div></div>
-      </div>`;
-    }).join("") : "";
+    const rows = on ? limits.windowRowsHtml(p, false) : "";
     return `<div class="limit-prov">
       <label class="row tight"><span>${escH(t("Show %@ in Limits").replace("%@", p.display_name))}</span>
         <input type="checkbox" data-limit="${escH(p.id)}" ${on ? "checked" : ""} /></label>

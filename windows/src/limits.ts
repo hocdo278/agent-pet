@@ -114,6 +114,44 @@ export function barColor(used: number): string {
   return used > 0.9 ? "#e5484d" : used > 0.75 ? "#f5a623" : "#30a46c";
 }
 
+function resetMs(iso: string | null): number {
+  if (!iso) return NaN;
+  return /^\d+(\.\d+)?$/.test(iso) ? Number(iso) * 1000 : Date.parse(iso);
+}
+
+/// "↻ 14:30" / "↻ Mon 11:00" for tight spaces (mac LimitFormat.compactReset).
+export function compactReset(iso: string | null, now = new Date()): string {
+  const ms = resetMs(iso);
+  if (!Number.isFinite(ms) || ms <= now.getTime()) return "";
+  const d = new Date(ms);
+  const sameDay = d.toDateString() === now.toDateString();
+  const opts: Intl.DateTimeFormatOptions = sameDay ? { hour: "2-digit", minute: "2-digit" }
+    : (ms - now.getTime()) < 6 * 86400_000 ? { weekday: "short", hour: "2-digit", minute: "2-digit" }
+    : { month: "short", day: "numeric" };
+  return `↻ ${d.toLocaleString([], opts)}`;
+}
+
+function escH(s: string): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+/// One provider's windows as bar rows (mac LimitWindowsView). `compact` uses
+/// the short reset clock for the popover; the Care tab has room for the full one.
+export function windowRowsHtml(p: LimitProvider, compact: boolean): string {
+  return p.windows.map((w) => {
+    const used = Math.min(1, Math.max(0, 1 - w.fraction_left));
+    const color = barColor(used);
+    const rst = compact ? compactReset(w.resets_at) : resetText(w.resets_at);
+    const pct = t("%d%% used").replace("%d", String(Math.round(used * 100))).replace("%%", "%");
+    return `<div class="limit-row">
+      <div class="limit-head"><span class="lbl">${escH(title(w))}</span>
+        <span class="pct" style="color:${color}">${escH(pct)}</span>
+        ${rst ? `<span class="rst">· ${escH(rst)}</span>` : ""}</div>
+      <div class="limit-bar"><div style="width:${(used * 100).toFixed(1)}%;background:${color}"></div></div>
+    </div>`;
+  }).join("");
+}
+
 // ---- pet bubble lines (mac ReactiveEngine.rateLimit + CareChat.anxious) ------
 
 export const ANXIOUS = [
