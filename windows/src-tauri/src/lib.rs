@@ -402,7 +402,13 @@ fn place_stats(app: &tauri::AppHandle, win: &tauri::WebviewWindow, base_h: f64) 
     let (Ok(pp), Ok(ps)) = (pet.outer_position(), pet.outer_size()) else { return };
     let sf = win.scale_factor().unwrap_or(1.0);
     let want_h = STATS_WANT_H.lock().ok().and_then(|g| *g).unwrap_or(base_h);
-    let size = ((316.0 * sf).round() as i32, (want_h * sf).round() as i32);
+    // Windows keeps an invisible resize border around undecorated windows
+    // (outer is 16 px wider than inner here); place by the outer rect.
+    let frame = match (win.outer_size(), win.inner_size()) {
+        (Ok(o), Ok(i)) => ((o.width as i32 - i.width as i32).max(0), (o.height as i32 - i.height as i32).max(0)),
+        _ => (0, 0),
+    };
+    let size = ((316.0 * sf).round() as i32 + frame.0, (want_h * sf).round() as i32 + frame.1);
     let pet_rect = (pp.x, pp.y, ps.width as i32, ps.height as i32);
     let centre = (pp.x + ps.width as i32 / 2, pp.y + ps.height as i32 / 2);
     // Anchor on what is drawn (sprite + bubble, from the click-through hit
@@ -425,7 +431,8 @@ fn place_stats(app: &tauri::AppHandle, win: &tauri::WebviewWindow, base_h: f64) 
     let Some(area) = area else { return };
     let p = geometry::place_card(size, pet_rect, area);
     // Capped to the room on that side; the card body scrolls (stats.ts/CSS).
-    let _ = win.set_size(tauri::PhysicalSize::new(size.0 as u32, size.1.min(p.max_h).max(1) as u32));
+    let inner_h = (size.1.min(p.max_h) - frame.1).max(1);
+    let _ = win.set_size(tauri::PhysicalSize::new((size.0 - frame.0) as u32, inner_h as u32));
     let _ = win.set_position(PhysicalPosition::new(p.x, p.y));
     let _ = win.emit(
         "stats-anchor",

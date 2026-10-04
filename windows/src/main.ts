@@ -448,9 +448,10 @@ listen("check-updates", async () => {
 // where transparent pixels never catch the mouse).
 canvas.addEventListener("mousedown", async (e) => {
   if (e.button !== 0) return;
-  // While the sheet is still loading there is no sprite rect yet , allow the
-  // drag anyway so the pet is never untouchable.
-  if (pet.spriteRect && !pet.hitTest(e.offsetX, e.offsetY)) return;
+  // Rust already makes the window click-through outside the pet's hit rect
+  // (sprite + bubble), so any click that reaches the canvas is on the pet.
+  // A second, narrower JS test here made a dead zone: the click was swallowed
+  // (not passed to the window below) yet did not drag.
   emit("popover-close", null);
   await getCurrentWindow().startDragging();
 });
@@ -461,7 +462,7 @@ bubbleEl.addEventListener("mousedown", async (e) => {
 });
 canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  if (pet.hitTest(e.offsetX, e.offsetY)) invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
+  invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
 });
 bubbleEl.addEventListener("contextmenu", (e) => {
   e.preventDefault();
