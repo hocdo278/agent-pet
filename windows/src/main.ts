@@ -443,28 +443,20 @@ listen("check-updates", async () => {
 });
 
 // --- interactions ------------------------------------------------------------
-// Drag works only when grabbing the PET SPRITE itself or the bubble , clicks
-// on the transparent area beside the pet fall through (like the macOS panel,
-// where transparent pixels never catch the mouse).
-canvas.addEventListener("mousedown", async (e) => {
+// Rust makes the window click-through outside the pet's hit rect (sprite box
+// + bubble), so any left press that reaches this document is on the pet.
+// Listen on the whole document: the hit rect also covers the gap between the
+// bubble and the sprite and the empty sides of the bubble row, which are
+// body/#pet-root, not the canvas. Pressing there used to be swallowed (not
+// passed to the window below) yet did nothing, so the pet felt stuck.
+document.addEventListener("mousedown", async (e) => {
   if (e.button !== 0) return;
-  // Rust already makes the window click-through outside the pet's hit rect
-  // (sprite + bubble), so any click that reaches the canvas is on the pet.
-  // A second, narrower JS test here made a dead zone: the click was swallowed
-  // (not passed to the window below) yet did not drag.
+  // Bubble controls (fold, carousel dots, dismiss, Warp-focus rows) keep their clicks.
+  if ((e.target as HTMLElement).closest("button, a, input, .car-dot, .focusable, [data-nodrag]")) return;
   emit("popover-close", null);
   await getCurrentWindow().startDragging();
 });
-bubbleEl.addEventListener("mousedown", async (e) => {
-  if (e.button !== 0) return;
-  emit("popover-close", null);
-  await getCurrentWindow().startDragging();
-});
-canvas.addEventListener("contextmenu", (e) => {
-  e.preventDefault();
-  invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
-});
-bubbleEl.addEventListener("contextmenu", (e) => {
+document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
 });
