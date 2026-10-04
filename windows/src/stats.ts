@@ -33,17 +33,21 @@ function petSheetUrl(slug: string | null): string | null {
   return lib?.url || (slug === savedSlug() ? localStorage.getItem("ap_pet_url") : null);
 }
 
-/// First idle frame of the 8x9 sheet (same as Settings' drawThumb).
+/// First idle frame of the 8x9 sheet (same as Settings' drawThumb). Loaded
+/// without crossOrigin: we only draw it, never read pixels back, and a
+/// CORS-mode load fails on the non-CORS copy the pet window already cached
+/// (see pet.ts load() retry).
 function drawThumb(url: string | null) {
   const cv = document.getElementById("sc-thumb") as HTMLCanvasElement | null;
   const ctx = cv?.getContext("2d");
-  if (!cv || !ctx || !url) return;
+  const log = (msg: string) => { invoke("log_debug", { msg: `stats thumb: ${msg}` }).catch(() => {}); };
+  if (!cv || !ctx || !url) { log(`skipped (canvas=${!!cv} ctx=${!!ctx} url=${url ? url.slice(0, 80) : "none"})`); return; }
   ctx.imageSmoothingEnabled = false;
   const img = new Image();
-  img.crossOrigin = "anonymous";
+  img.onerror = () => log(`load failed ${url.slice(0, 80)}`);
   img.onload = () => {
     const fw = img.naturalWidth / 8, fh = img.naturalHeight / 9;
-    if (!fw || !fh) return;
+    if (!fw || !fh) { log(`empty image ${img.naturalWidth}x${img.naturalHeight}`); return; }
     const sc = Math.min(cv.width / fw, cv.height / fh);
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.drawImage(img, 0, 0, fw, fh, (cv.width - fw * sc) / 2, (cv.height - fh * sc) / 2, fw * sc, fh * sc);
@@ -110,6 +114,8 @@ upd.onclick = async () => {
 getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) void getCurrentWindow().hide(); });
 listen("popover-close", () => void getCurrentWindow().hide());
 window.addEventListener("keydown", (e) => { if (e.key === "Escape") void getCurrentWindow().hide(); });
+// No WebView2 Back/Refresh/Print menu inside the card.
+window.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // Rust emits this right before showing the card; the pet window that was
 // right-clicked says which pet (split-pet windows each have their own).
