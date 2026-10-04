@@ -463,6 +463,9 @@ fn show_transient(app: &tauri::AppHandle, label: &str, url: &str, base_h: f64, e
                 .inner_size(if label == "stats" { 316.0 } else { 300.0 }, base_h)
                 .decorations(false)
                 .transparent(true)
+                // Without this Windows draws a 1px DWM border around the whole
+                // (mostly transparent) window: a white line floating above the card.
+                .shadow(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .resizable(false)
