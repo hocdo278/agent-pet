@@ -3,6 +3,7 @@ pub mod geometry;
 pub mod hooks;
 pub mod jcode;
 pub mod jcode_usage;
+pub mod limits;
 pub mod server;
 pub mod statemap;
 pub mod transcript;
@@ -206,6 +207,13 @@ fn play_sound(event: String) {
     }
     #[cfg(not(windows))]
     let _ = event; // Linux build keeps the WebAudio chime (see main.ts)
+}
+
+/// Subscription limits for the Care tab and the pet's "limit low" mood. Only
+/// percentages and reset times cross into the webview, never the token.
+#[tauri::command]
+async fn get_limits() -> Vec<limits::LimitProvider> {
+    limits::probe_claude(&limits::default_paths()).await.into_iter().collect()
 }
 
 #[tauri::command]
@@ -473,7 +481,8 @@ pub fn run() {
             open_popover,
             log_debug,
             set_hit_rect,
-            play_sound
+            play_sound,
+            get_limits
         ])
         .setup(|app| {
             server::start(app.handle().clone());
