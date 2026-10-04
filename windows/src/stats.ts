@@ -4,7 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch, exit } from "@tauri-apps/plugin-process";
 import * as care from "./care";
@@ -80,11 +80,23 @@ function paint() {
 let lastH = 0;
 function fit() {
   const card = document.querySelector(".sc-card") as HTMLElement;
-  const h = Math.min(900, Math.max(240, card.scrollHeight + 20));
+  const scroller = document.getElementById("sc-body")!;
+  // Natural height = card chrome + the body's full scroll height (the body
+  // may currently be clipped to a smaller window).
+  const h = Math.ceil(card.offsetHeight - scroller.clientHeight + scroller.scrollHeight + 16);
   if (Math.abs(h - lastH) < 2) return;
   lastH = h;
-  getCurrentWindow().setSize(new LogicalSize(316, h)).catch(() => {});
+  // Rust sizes and places the card next to the pet (capped to the room there).
+  invoke("stats_resized", { height: h }).catch(() => {});
 }
+
+// mac NSPopover arrow: on the edge facing the pet, pointing at its centre.
+listen<{ edge: string; offset: number }>("stats-anchor", (e) => {
+  const card = document.querySelector(".sc-card") as HTMLElement;
+  card.dataset.edge = e.payload.edge;
+  // offset is window-relative; the card sits 8 px inside the transparent body padding.
+  card.style.setProperty("--arrow-x", `${Math.round(e.payload.offset - 8)}px`);
+});
 
 function applyStatic() {
   const set = (id: string, key: string) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };

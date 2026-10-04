@@ -823,7 +823,23 @@ body.pop {
 .pop-limit { padding: 2px 14px 10px; }
 /* ---- pet stats card (mac PetStatsView) ---- */
 /* Opaque: text from windows behind the 0.97 popover background read through. */
-.sc-card { background: #28282c; }
+.sc-card { background: #28282c; position: relative; overflow: visible; }
+/* Popover arrow toward the pet (set by stats.ts from the "stats-anchor" event). */
+.sc-card[data-edge="below"]::before, .sc-card[data-edge="above"]::before {
+  content: ""; position: absolute; left: var(--arrow-x, 50%); width: 12px; height: 12px;
+  background: #28282c; border: 1px solid rgba(255,255,255,0.12); transform: translateX(-6px) rotate(45deg);
+}
+.sc-card[data-edge="below"]::before { top: -7px; border-right: 0; border-bottom: 0; }
+.sc-card[data-edge="above"]::before { bottom: -7px; border-left: 0; border-top: 0; }
+.sc-card > :first-child, .sc-card > .pop-foot { position: relative; }
+.sc-card > .pop-divider { position: relative; }
+body.pop.stats { padding: 8px; }
+/* Fill the window; when Rust caps the window to the room beside the pet, the
+   stats scroll and the footer stays put (mac popover behaviour). */
+body.pop.stats .sc-card { height: 100%; }
+.sc-card #sc-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sc-card #sc-body::-webkit-scrollbar { width: 6px; }
+.sc-card #sc-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 3px; }
 .sc-card #sc-body { display: flex; flex-direction: column; gap: 11px; padding: 14px 14px 10px; }
 .sc-head { display: flex; align-items: center; gap: 10px; }
 .sc-thumbwrap { width: 46px; height: 46px; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; }

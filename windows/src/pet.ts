@@ -96,20 +96,20 @@ export class Pet {
   /// Last drawn sprite rect in backing-store pixels , the pet's true bounds.
   spriteRect: { x: number; y: number; w: number; h: number } | null = null;
 
-  /// True when a CSS-pixel point inside the canvas hits the SPRITE (alpha
-  /// test), so clicks on the empty area around the pet don't drag the window.
+  /// True when a CSS-pixel point inside the canvas is on the pet: inside the
+  /// sprite's box plus a small margin. The box (not per-pixel alpha) because
+  /// pixel-art sprites are full of transparent gaps between ears, arms and
+  /// body; an alpha test made most grabs fall through to the window below,
+  /// so the pet seemed impossible to move. Clicks outside the box still pass
+  /// through (the Rust hit rect is the same box).
   hitTest(cssX: number, cssY: number): boolean {
     const r = this.spriteRect;
     if (!r) return false;
     const kx = this.canvas.width / (this.canvas.clientWidth || 1);
     const ky = this.canvas.height / (this.canvas.clientHeight || 1);
     const x = cssX * kx, y = cssY * ky;
-    if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return false;
-    try {
-      return this.ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3] > 16;
-    } catch {
-      return true; // tainted canvas (no CORS): fall back to the rect test
-    }
+    const m = 4 * kx;
+    return x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.h + m;
   }
 
   constructor(private canvas: HTMLCanvasElement) {

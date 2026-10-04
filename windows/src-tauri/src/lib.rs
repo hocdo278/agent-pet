@@ -378,7 +378,7 @@ fn show_stats(app: &tauri::AppHandle, pet: Option<String>) {
         Some(p) => format!("stats.html?pet={}", url_component(p)),
         None => "stats.html".to_string(),
     };
-    show_transient(app, "stats", &url, 760.0, "stats-shown", pet);
+    show_transient(app, "stats", &url, 600.0, "stats-shown", pet);
 }
 
 /// Percent-encodes everything but unreserved URL characters.
@@ -389,6 +389,60 @@ fn url_component(s: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+/// Hangs the stats card off the pet window like the macOS popover (below the
+/// pet when it fits, else above, else beside it) and tells the card where its
+/// arrow goes. Also re-run when the card resizes, so it never grows over the pet.
+/// Height (logical px) the card's content wants, reported by stats.ts.
+static STATS_WANT_H: Mutex<Option<f64>> = Mutex::new(None);
+
+fn place_stats(app: &tauri::AppHandle, win: &tauri::WebviewWindow, base_h: f64) {
+    let Some(pet) = app.get_webview_window("pet") else { return };
+    let (Ok(pp), Ok(ps)) = (pet.outer_position(), pet.outer_size()) else { return };
+    let sf = win.scale_factor().unwrap_or(1.0);
+    let want_h = STATS_WANT_H.lock().ok().and_then(|g| *g).unwrap_or(base_h);
+    let size = ((316.0 * sf).round() as i32, (want_h * sf).round() as i32);
+    let pet_rect = (pp.x, pp.y, ps.width as i32, ps.height as i32);
+    let centre = (pp.x + ps.width as i32 / 2, pp.y + ps.height as i32 / 2);
+    // Anchor on what is drawn (sprite + bubble, from the click-through hit
+    // rect), not the whole 260x320 window, so the card hugs the pet.
+    let pet_rect = app
+        .try_state::<Mutex<HitRect>>()
+        .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)))
+        .filter(|&(_, _, w, h)| w > 0.0 && h > 0.0)
+        .map(|(x, y, w, h)| (pp.x + x as i32, pp.y + y as i32, w as i32, h as i32))
+        .unwrap_or(pet_rect);
+    let area = app
+        .monitor_from_point(centre.0 as f64, centre.1 as f64)
+        .ok()
+        .flatten()
+        .or_else(|| pet.current_monitor().ok().flatten())
+        .map(|m| {
+            let wa = m.work_area();
+            (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32)
+        });
+    let Some(area) = area else { return };
+    let p = geometry::place_card(size, pet_rect, area);
+    // Capped to the room on that side; the card body scrolls (stats.ts/CSS).
+    let _ = win.set_size(tauri::PhysicalSize::new(size.0 as u32, size.1.min(p.max_h).max(1) as u32));
+    let _ = win.set_position(PhysicalPosition::new(p.x, p.y));
+    let _ = win.emit(
+        "stats-anchor",
+        serde_json::json!({ "edge": p.edge.as_str(), "offset": p.arrow as f64 / sf }),
+    );
+}
+
+/// stats.ts reports how tall its content is; Rust sizes and places the card
+/// (one owner for both, so a resize can never push the card over the pet).
+#[tauri::command]
+fn stats_resized(app: tauri::AppHandle, height: f64) {
+    if let Ok(mut g) = STATS_WANT_H.lock() {
+        *g = Some(height.clamp(200.0, 1200.0));
+    }
+    if let Some(win) = app.get_webview_window("stats") {
+        place_stats(&app, &win, 600.0);
+    }
 }
 
 /// A frameless, always-on-top window that hides when it loses focus, placed
@@ -428,10 +482,11 @@ fn show_transient(app: &tauri::AppHandle, label: &str, url: &str, base_h: f64, e
             }
         }
     };
-    // Place near the cursor, clamped onto the monitor under it.
-    if let Ok(cur) = app.cursor_position() {
+    if label == "stats" {
+        place_stats(app, &win, base_h);
+    } else if let Ok(cur) = app.cursor_position() {
+        // Quick popover (tray): near the cursor, clamped onto that monitor.
         let sf = win.scale_factor().unwrap_or(1.0);
-        // The card resizes itself to its content; use the current size once known.
         let (w, h) = match win.outer_size() {
             Ok(sz) if sz.height > 50 => (sz.width as f64, sz.height as f64),
             _ => (300.0 * sf, base_h * sf),
@@ -517,6 +572,7 @@ pub fn run() {
             get_pet_visible,
             open_popover,
             open_stats,
+            stats_resized,
             log_debug,
             set_hit_rect,
             play_sound,
