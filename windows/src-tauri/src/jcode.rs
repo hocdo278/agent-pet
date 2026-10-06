@@ -207,34 +207,35 @@ pub fn event_from_env(get: impl Fn(&str) -> Option<String>) -> Option<(String, S
                 name = "waiting".into();
                 message = last_sentence(&text).chars().take(140).collect();
             } else {
-                // Finished turn: keep the agent's closing line so the "finished"
+                // Finished turn: keep the agent's opening line so the "finished"
                 // toast says what was done (markdown marks stripped).
-                message = closing_line(&text).chars().take(140).collect();
+                message = opening_line(&text).chars().take(140).collect();
             }
         }
     }
     Some((name, session, project, tool, message))
 }
 
-/// The agent's last sentence for a finished turn, markdown marks stripped.
-/// Unlike `last_sentence` a '.' only ends a sentence before whitespace/end, so
-/// `server.rs` or `0.1.27` stay whole. Falls back to the whole text.
-pub fn closing_line(text: &str) -> String {
-    let clean = text.replace("**", "").replace('`', "").replace('\n', " ");
-    let clean = clean.trim();
-    let chars: Vec<char> = clean.chars().collect();
-    let mut start = 0;
-    let mut last = 0;
+/// The agent's first sentence for a finished turn, markdown marks stripped.
+/// The opening line usually states the result ("Installed X"), while the last
+/// one is often an invitation ("let me know..."). A '.' only ends a sentence
+/// before whitespace/end, so `server.rs` or `0.1.27` stay whole; a line break
+/// also ends it, so a heading or bullet isn't glued to the next paragraph.
+pub fn opening_line(text: &str) -> String {
+    let clean = text.replace("**", "").replace('`', "");
+    let first = clean
+        .lines()
+        .map(|l| l.trim().trim_start_matches(|c: char| matches!(c, '#' | '-' | '*' | '>' | '•')).trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let chars: Vec<char> = first.chars().collect();
     for (i, &c) in chars.iter().enumerate() {
         let end_mark = c == '.' || c == '!' || c == '?';
-        let boundary = i + 1 == chars.len() || chars[i + 1].is_whitespace();
-        if end_mark && boundary && i + 1 < chars.len() {
-            last = start;
-            start = i + 1;
+        if end_mark && (i + 1 == chars.len() || chars[i + 1].is_whitespace()) {
+            return chars[..=i].iter().collect();
         }
     }
-    let tail: String = chars[start..].iter().collect::<String>().trim().to_string();
-    if tail.is_empty() { chars[last..].iter().collect::<String>().trim().to_string() } else { tail }
+    first.to_string()
 }
 
 #[cfg(test)]
@@ -286,18 +287,20 @@ mod tests {
     #[test]
     fn done_message_drops_markdown_marks() {
         let e = event_from_env(env(&[("JCODE_HOOK_EVENT", "turn_end"), ("JCODE_HOOK_SESSION_ID", "s"),
-            ("JCODE_HOOK_STATUS", "ok"), ("JCODE_HOOK_LAST_ASSISTANT_TEXT", "Intro.\n\n**Done:** patched `server.rs`.")])).unwrap();
+            ("JCODE_HOOK_STATUS", "ok"), ("JCODE_HOOK_LAST_ASSISTANT_TEXT", "**Done:** patched `server.rs`. Let me know if you want more.")])).unwrap();
         assert_eq!(e.0, "turn_end");
         assert_eq!(e.4, "Done: patched server.rs.");
     }
 
     #[test]
-    fn closing_line_keeps_dots_inside_tokens() {
-        assert_eq!(closing_line("Intro. Updated 0.1.27 and server.rs"), "Updated 0.1.27 and server.rs");
-        assert_eq!(closing_line("One. Two! Three."), "Three.");
-        assert_eq!(closing_line("Single line without end"), "Single line without end");
-        assert_eq!(closing_line("a.\n\n**Done:** ok."), "Done: ok.");
-        assert_eq!(closing_line(""), "");
+    fn opening_line_keeps_dots_inside_tokens() {
+        assert_eq!(opening_line("Updated 0.1.27 and server.rs. Then more."), "Updated 0.1.27 and server.rs.");
+        assert_eq!(opening_line("One. Two! Three."), "One.");
+        assert_eq!(opening_line("Single line without end"), "Single line without end");
+        assert_eq!(opening_line("Đã cài xong bản mới\n\n- chi tiết một\n- chi tiết hai"), "Đã cài xong bản mới");
+        assert_eq!(opening_line("\n\n## Kết quả\nOK."), "Kết quả");
+        assert_eq!(opening_line("  \n "), "");
+        assert_eq!(opening_line(""), "");
     }
 
     #[test]
