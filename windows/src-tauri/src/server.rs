@@ -258,6 +258,11 @@ fn handle_event(app: &AppHandle, body: &str) {
         None
     };
     let is_stop_done = event == "Stop" && state == "done";
+    // jcode title lookup only on sparse lifecycle events: post_tool fires per tool
+    // call, and racing one thread per call could reorder states. The frontend
+    // keeps the last known title (state.ts: `e.title ?? prev?.title`).
+    let jcode_title_lookup = agent == "jcode"
+        && matches!(event.as_str(), "session_start" | "turn_start" | "turn_end" | "waiting");
     // Kept for the token events, since `emit_payload` moves session/project/agent.
     let agent_kind = agent.clone();
     let tok_session = session.clone();
@@ -321,6 +326,22 @@ fn handle_event(app: &AppHandle, body: &str) {
                 }
             }
         });
+    }
+
+    // jcode's hooks carry no title: read it from the session snapshot's head so
+    // the bubble and the "finished" notification can name the job. Off the
+    // listener thread (the snapshot lives on the WSL UNC share).
+    if jcode_title_lookup {
+        let app2 = app.clone();
+        let state = state.to_string();
+        let emit = emit_payload;
+        std::thread::spawn(move || {
+            let title = crate::hooks::jcode_home()
+                .and_then(|(home, _)| crate::jcode_usage::session_path(&tok_session, &home))
+                .and_then(|p| crate::jcode_usage::title_at(&p));
+            emit(&app2, &state, title);
+        });
+        return;
     }
 
     emit_payload(app, state, None);
