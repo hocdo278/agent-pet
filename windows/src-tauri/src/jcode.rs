@@ -206,10 +206,35 @@ pub fn event_from_env(get: impl Fn(&str) -> Option<String>) -> Option<(String, S
             if looks_like_question(&text) {
                 name = "waiting".into();
                 message = last_sentence(&text).chars().take(140).collect();
+            } else {
+                // Finished turn: keep the agent's closing line so the "finished"
+                // toast says what was done (markdown marks stripped).
+                message = closing_line(&text).chars().take(140).collect();
             }
         }
     }
     Some((name, session, project, tool, message))
+}
+
+/// The agent's last sentence for a finished turn, markdown marks stripped.
+/// Unlike `last_sentence` a '.' only ends a sentence before whitespace/end, so
+/// `server.rs` or `0.1.27` stay whole. Falls back to the whole text.
+pub fn closing_line(text: &str) -> String {
+    let clean = text.replace("**", "").replace('`', "").replace('\n', " ");
+    let clean = clean.trim();
+    let chars: Vec<char> = clean.chars().collect();
+    let mut start = 0;
+    let mut last = 0;
+    for (i, &c) in chars.iter().enumerate() {
+        let end_mark = c == '.' || c == '!' || c == '?';
+        let boundary = i + 1 == chars.len() || chars[i + 1].is_whitespace();
+        if end_mark && boundary && i + 1 < chars.len() {
+            last = start;
+            start = i + 1;
+        }
+    }
+    let tail: String = chars[start..].iter().collect::<String>().trim().to_string();
+    if tail.is_empty() { chars[last..].iter().collect::<String>().trim().to_string() } else { tail }
 }
 
 #[cfg(test)]
@@ -255,6 +280,24 @@ mod tests {
         let e = event_from_env(env(&[("JCODE_HOOK_EVENT", "turn_end"), ("JCODE_HOOK_SESSION_ID", "s"),
             ("JCODE_HOOK_STATUS", "ok"), ("JCODE_HOOK_LAST_ASSISTANT_TEXT", "Fixed the bug and tests pass.")])).unwrap();
         assert_eq!(e.0, "turn_end");
+        assert_eq!(e.4, "Fixed the bug and tests pass.");
+    }
+
+    #[test]
+    fn done_message_drops_markdown_marks() {
+        let e = event_from_env(env(&[("JCODE_HOOK_EVENT", "turn_end"), ("JCODE_HOOK_SESSION_ID", "s"),
+            ("JCODE_HOOK_STATUS", "ok"), ("JCODE_HOOK_LAST_ASSISTANT_TEXT", "Intro.\n\n**Done:** patched `server.rs`.")])).unwrap();
+        assert_eq!(e.0, "turn_end");
+        assert_eq!(e.4, "Done: patched server.rs.");
+    }
+
+    #[test]
+    fn closing_line_keeps_dots_inside_tokens() {
+        assert_eq!(closing_line("Intro. Updated 0.1.27 and server.rs"), "Updated 0.1.27 and server.rs");
+        assert_eq!(closing_line("One. Two! Three."), "Three.");
+        assert_eq!(closing_line("Single line without end"), "Single line without end");
+        assert_eq!(closing_line("a.\n\n**Done:** ok."), "Done: ok.");
+        assert_eq!(closing_line(""), "");
     }
 
     #[test]

@@ -58,13 +58,35 @@ pub fn title_from_head(head: &[u8]) -> Option<String> {
             b'\\' => i += 2,
             b'"' => {
                 let s: String = serde_json::from_slice(&head[start..=i]).ok()?;
-                let s = s.trim().to_string();
+                let s = clean_title(&s);
                 return if s.is_empty() { None } else { Some(s) };
             }
             _ => i += 1,
         }
     }
     None // truncated inside the title: skip rather than show half of it
+}
+
+/// jcode titles start with the user's first message, which often begins with
+/// pasted-image placeholders (`[image 1]`). Drop them and collapse whitespace so
+/// an image-only title becomes empty (the caller then shows nothing for it).
+pub fn clean_title(s: &str) -> String {
+    const TAG: &str = "[image ";
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find(TAG) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + TAG.len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && after[digits..].starts_with(']') {
+            rest = &after[digits + 1..];
+        } else {
+            out.push_str(TAG);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The journal next to a snapshot (`<id>.json` -> `<id>.journal.jsonl`).
@@ -278,6 +300,24 @@ mod tests {
     fn title_inside_messages_is_ignored() {
         let d = br#"{"id":"s","messages":[{"text":"say \"title\":\"fake\""}]}"#;
         assert_eq!(title_from_head(d), None);
+    }
+
+    #[test]
+    fn image_placeholders_are_dropped_from_titles() {
+        assert_eq!(clean_title("[image 4][image 5]"), "");
+        assert_eq!(clean_title("[image 1] kiểm tra mấy file này"), "kiểm tra mấy file này");
+        assert_eq!(clean_title("[image 1] [image 2]  bạn  kiểm tra"), "bạn kiểm tra");
+        assert_eq!(clean_title("see [image x] here"), "see [image x] here"); // not a placeholder
+        assert_eq!(clean_title("tail [image 12"), "tail [image 12"); // unterminated
+    }
+
+    #[test]
+    fn image_only_title_reads_as_none() {
+        assert_eq!(title_from_head(br#"{"id":"s","title":"[image 4][image 5]","messages":[]}"#), None);
+        assert_eq!(
+            title_from_head(br#"{"id":"s","title":"[image 1] d\u1ecdn \u0111i","messages":[]}"#).as_deref(),
+            Some("dọn đi")
+        );
     }
 
     #[test]

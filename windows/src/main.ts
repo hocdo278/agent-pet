@@ -335,8 +335,9 @@ function maybeNotify(e: AgentEventPayload) {
   const proj = (e.project ? basename(e.project) : "") || e.agent;
   // Same copy as the macOS notifications.
   const title = e.state === "done" ? `${proj} ${t("finished")}` : `${proj} ${t("needs input")}`;
+  const doneBody = [e.title, e.message].map((s) => (s ?? "").trim()).filter(Boolean).join(" — ").slice(0, 200);
   const body = e.state === "done"
-    ? (e.title ? `${e.title}` : t("Agent completed its turn"))
+    ? (doneBody || t("Agent completed its turn"))
     : (e.message || t("Waiting for you"));
   try { sendNotification({ title, body }); } catch {}
 }
