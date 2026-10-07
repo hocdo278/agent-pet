@@ -28,6 +28,67 @@ pub fn session_path(session_id: &str, home: &Path) -> Option<PathBuf> {
     Some(home.join(".jcode").join("sessions").join(format!("{session_id}.json")))
 }
 
+/// Session title from a snapshot's head. The snapshot starts with
+/// `{"id":..,"parent_id":..,"title":"..",...,"messages":[` so only the first
+/// few KB are read (the file can be tens of MB). jcode's hooks carry no title,
+/// so this is the only source. None when absent, null, or empty.
+pub fn title_at(snapshot: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(4096);
+    std::fs::File::open(snapshot).ok()?.take(4096).read_to_end(&mut head).ok()?;
+    title_from_head(&head)
+}
+
+/// Pure half of `title_at`, for tests: pulls `"title":"..."` out of the head.
+pub fn title_from_head(head: &[u8]) -> Option<String> {
+    let key = b"\"title\":";
+    let at = find(head, key, 0)?;
+    // Titles are never past the messages array; guard against a quoted key inside one.
+    if let Some(m) = find(head, b"\"messages\":", 0) {
+        if m < at { return None; }
+    }
+    let mut i = at + key.len();
+    while i < head.len() && head[i] == b' ' { i += 1; }
+    if i >= head.len() || head[i] != b'"' { return None; } // null or missing
+    // Find the closing unescaped quote, then let serde decode escapes/unicode.
+    let start = i;
+    i += 1;
+    while i < head.len() {
+        match head[i] {
+            b'\\' => i += 2,
+            b'"' => {
+                let s: String = serde_json::from_slice(&head[start..=i]).ok()?;
+                let s = clean_title(&s);
+                return if s.is_empty() { None } else { Some(s) };
+            }
+            _ => i += 1,
+        }
+    }
+    None // truncated inside the title: skip rather than show half of it
+}
+
+/// jcode titles start with the user's first message, which often begins with
+/// pasted-image placeholders (`[image 1]`). Drop them and collapse whitespace so
+/// an image-only title becomes empty (the caller then shows nothing for it).
+pub fn clean_title(s: &str) -> String {
+    const TAG: &str = "[image ";
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find(TAG) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + TAG.len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && after[digits..].starts_with(']') {
+            rest = &after[digits + 1..];
+        } else {
+            out.push_str(TAG);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// The journal next to a snapshot (`<id>.json` -> `<id>.journal.jsonl`).
 pub fn journal_path(snapshot: &Path) -> PathBuf {
     snapshot.with_extension("journal.jsonl")
@@ -220,6 +281,48 @@ mod tests {
     fn not_a_session_gives_zero() {
         assert_eq!(total_tokens(b"not json"), 0);
         assert_eq!(total_tokens(br#"{"token_usage":{"input_tokens":3"#), 0);
+    }
+
+    #[test]
+    fn title_is_read_from_snapshot_head() {
+        let d = br#"{"id":"s","parent_id":null,"title":"x\u00f3a session \"c\u0169\"","created_at":"t","messages":[]}"#;
+        assert_eq!(title_from_head(d).as_deref(), Some("xóa session \"cũ\""));
+    }
+
+    #[test]
+    fn missing_null_or_empty_title_is_none() {
+        assert_eq!(title_from_head(br#"{"id":"s","messages":[]}"#), None);
+        assert_eq!(title_from_head(br#"{"id":"s","title":null,"messages":[]}"#), None);
+        assert_eq!(title_from_head(br#"{"id":"s","title":"  ","messages":[]}"#), None);
+    }
+
+    #[test]
+    fn title_inside_messages_is_ignored() {
+        let d = br#"{"id":"s","messages":[{"text":"say \"title\":\"fake\""}]}"#;
+        assert_eq!(title_from_head(d), None);
+    }
+
+    #[test]
+    fn image_placeholders_are_dropped_from_titles() {
+        assert_eq!(clean_title("[image 4][image 5]"), "");
+        assert_eq!(clean_title("[image 1] kiểm tra mấy file này"), "kiểm tra mấy file này");
+        assert_eq!(clean_title("[image 1] [image 2]  bạn  kiểm tra"), "bạn kiểm tra");
+        assert_eq!(clean_title("see [image x] here"), "see [image x] here"); // not a placeholder
+        assert_eq!(clean_title("tail [image 12"), "tail [image 12"); // unterminated
+    }
+
+    #[test]
+    fn image_only_title_reads_as_none() {
+        assert_eq!(title_from_head(br#"{"id":"s","title":"[image 4][image 5]","messages":[]}"#), None);
+        assert_eq!(
+            title_from_head(br#"{"id":"s","title":"[image 1] d\u1ecdn \u0111i","messages":[]}"#).as_deref(),
+            Some("dọn đi")
+        );
+    }
+
+    #[test]
+    fn truncated_title_is_none() {
+        assert_eq!(title_from_head(br#"{"id":"s","title":"abc"#), None);
     }
 
     #[test]
