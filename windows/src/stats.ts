@@ -29,8 +29,18 @@ function petName(slug: string | null): string {
 }
 
 function petSheetUrl(slug: string | null): string | null {
-  const lib = getLibrary().find((p) => p.slug === slug);
-  return lib?.url || (slug === savedSlug() ? localStorage.getItem("ap_pet_url") : null);
+  const lib = getLibrary();
+  // 1. The pet that was right-clicked, if it is still in the library.
+  const hit = lib.find((p) => p.slug === slug)?.url;
+  if (hit) return hit;
+  // 2. The currently selected pet's cached URL (also covers a slug that was
+  //    renamed/removed after the card opened).
+  const selected = localStorage.getItem("ap_pet_custom") || localStorage.getItem("ap_pet_url");
+  if (selected && (!slug || slug === savedSlug())) return selected;
+  // 3. The saved pet in the library, then any pet: a card with some pet's face
+  //    is better than an empty frame (the name above still says whose it is).
+  const saved = lib.find((p) => p.slug === savedSlug())?.url;
+  return saved || selected || lib[0]?.url || null;
 }
 
 /// First idle frame of the 8x9 sheet (same as Settings' drawThumb). Loaded
