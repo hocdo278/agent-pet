@@ -6,8 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { check } from "@tauri-apps/plugin-updater";
+import { projectLabel } from "./projectnames";
 import { relaunch, exit } from "@tauri-apps/plugin-process";
-import { SessionStore, basename, type AgentEventPayload, type Session } from "./state";
+import { SessionStore, type AgentEventPayload, type Session } from "./state";
 import { agentIconUrl } from "./icons";
 import { elapsedString } from "./bubble";
 import { t } from "./i18n";
@@ -61,7 +62,7 @@ function paint() {
     const icon = agentIconUrl(s.agent);
     row.innerHTML =
       `<span class="sess-dot"></span>` +
-      `<span class="pop-ameta"><b>${esc(s.project ? basename(s.project) : s.session)}</b>` +
+      `<span class="pop-ameta"><b>${esc(s.project ? projectLabel(s.project) : s.session)}</b>` +
       `<span class="cap">${esc(s.title || s.live || t(cap(s.state)))}</span></span>` +
       (icon ? `<img class="dp-icon" src="${icon}" alt="">` : "") +
       `<span class="sess-time">${timeString(s)}</span>`;
