@@ -20,13 +20,11 @@ const STATE_ROW: Record<string, number> = {
   celebrate: 4,  // jumping , the 3s burst when all work completes
 };
 
-// Frame rate varies by mood (faster while working), like the macOS app. `waiting`
-// slowed from 4 to 3 fps: a 14-frame kneel row looped in 3.5 s and the hand motion
-// read as too fast.
+// Frame rate varies by mood (faster while working), like the macOS app.
 const STATE_FPS: Record<string, number> = {
   working: 8,
   celebrate: 8,
-  waiting: 3,
+  waiting: 4,
   done: 3,
   idle: 3,
   registered: 3,
@@ -169,6 +167,11 @@ export class Pet {
     const bound = parseInt(localStorage.getItem(`ap_bind_${state}`) ?? "", 10);
     const row = Number.isFinite(bound) && bound >= 0 ? bound : (STATE_ROW[state] ?? 0);
     if (row !== this.row) { this.row = row; this.frame = 0; }
+    // Per-row override (`ap_fps_row_<row>`, 1-30 fps) so one clip can run slower
+    // than its mood's default without changing every other pet or mood. It rides
+    // in the backup file, so a pet import can carry it.
+    const rowFps = parseFloat(localStorage.getItem(`ap_fps_row_${row}`) ?? "");
+    if (Number.isFinite(rowFps) && rowFps >= 1 && rowFps <= 30) this.fps = rowFps;
   }
 
   /// The frames of the current row (clamped to what the sheet actually has).
