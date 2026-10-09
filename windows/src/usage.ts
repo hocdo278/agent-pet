@@ -67,9 +67,12 @@ function loadDirty(): Set<string> {
 }
 function saveDirty(d: Set<string>) { localStorage.setItem(DIRTY_KEY, JSON.stringify([...d])); }
 
+/// Shown for usage from agents whose hook carries no workspace (Antigravity IDE).
+export const NO_PROJECT = "(no project)";
+
 function record(project: string, agent: string, tokens: number, sessions: number, cost = 0) {
-  if (!project || !agent || (tokens <= 0 && sessions <= 0)) return;
-  const { id, name } = projectIdentity(project);
+  if (!agent || (tokens <= 0 && sessions <= 0)) return;
+  const { id, name } = projectIdentity(project || NO_PROJECT);
   const day = today();
   const key = `${id}|${agent}|${day}`;
   const store = load();
@@ -131,6 +134,7 @@ export function byAgent(): AgentTotal[] {
 export function knownProjects(): { id: string; name: string }[] {
   const byId = new Map<string, { id: string; name: string; tokens: number }>();
   for (const r of Object.values(load())) {
+    if (r.projectName === NO_PROJECT) continue; // not a real project: nothing to assign a pet to
     const cur = byId.get(r.projectId);
     if (cur) cur.tokens += r.tokens;
     else byId.set(r.projectId, { id: r.projectId, name: r.projectName, tokens: r.tokens });
