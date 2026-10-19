@@ -319,8 +319,11 @@ function maybeNotify(e: AgentEventPayload) {
   const proj = (e.project ? basename(e.project) : "") || e.agent;
   // Same copy as the macOS notifications.
   const title = e.state === "done" ? `${proj} ${t("finished")}` : `${proj} ${t("needs input")}`;
+  // The agent's opening line says what this turn did; the session title is only
+  // a fallback (jcode keeps one title per session, so it goes stale).
+  const doneBody = ((e.message ?? "").trim() || (e.title ?? "").trim()).slice(0, 200);
   const body = e.state === "done"
-    ? t("Agent completed its turn")
+    ? (doneBody || t("Agent completed its turn"))
     : (e.message || t("Waiting for you"));
   try { sendNotification({ title, body }); } catch {}
 }

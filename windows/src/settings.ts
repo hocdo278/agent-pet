@@ -624,6 +624,7 @@ const MSG_AGENTS: [string, string][] = [
   ["all", "All agents"], ["claude", "Claude Code"], ["codex", "Codex"], ["gemini", "Gemini CLI"],
   ["cursor", "Cursor"], ["opencode", "opencode"], ["windsurf", "Windsurf"],
   ["antigravity", "Antigravity"], ["copilot", "GitHub Copilot"], ["kiro", "Kiro CLI"],
+  ["jcode", "jcode"],
 ];
 
 function initBubble() {
