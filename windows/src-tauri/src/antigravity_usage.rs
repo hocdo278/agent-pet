@@ -9,7 +9,7 @@
 //!   it (`<gemini>/antigravity-ide/conversations/<id>.db`, table `steps`, column
 //!   `metadata`, protobuf field 9) does: 9.2 = input tokens, 9.3 = output tokens
 //!   (absent when 0). Verified equal to the CLI transcript on 134 model steps.
-//!   `usage_for_transcript` picks the DB when the transcript has no token fields.
+//!   `new_usage_tokens` picks the DB for IDE transcripts (path under `antigravity-ide`).
 //!
 //! Counted as input + output. agy's `input_tokens` excludes cached tokens
 //! (`cache_read_tokens` / DB field 9.5 are reported separately), so nothing is
