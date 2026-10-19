@@ -5,8 +5,10 @@ import XCTest
 @MainActor
 final class UsageLimitRowsTests: XCTestCase {
 
+    /// `left: nil` = a provider with no limit window (only text lines).
     private func provider(_ id: String, left: Double?) -> OpenUsageClient.Provider {
-        OpenUsageClient.Provider(id: id, displayName: id, plan: nil, fractionLeft: left, todayLabel: nil)
+        OpenUsageClient.Provider(id: id, displayName: id, plan: nil, todayLabel: nil,
+                                 windows: left.map { [.init(label: "Session", fractionLeft: $0)] } ?? [])
     }
 
     /// A provider with only text lines has no limit, so it gets no row instead
