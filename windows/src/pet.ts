@@ -30,7 +30,13 @@ const STATE_FPS: Record<string, number> = {
   registered: 3,
 };
 
-export interface Rect { x: number; y: number; w: number; h: number }
+export interface Rect {
+  x: number; y: number; w: number; h: number;
+  /// Tight box of the visible (non-transparent) pixels, relative to this frame's
+  /// top-left. The frame itself is a grid cell (whole row band x column run), so it
+  /// usually has transparent padding; `ink` is what the pet really covers.
+  ink?: { x: number; y: number; w: number; h: number };
+}
 
 /// Contiguous runs of `true` in an occupancy array → [start, end) pairs.
 function segments(occ: Uint8Array): Array<[number, number]> {
@@ -42,6 +48,25 @@ function segments(occ: Uint8Array): Array<[number, number]> {
   }
   if (start >= 0) out.push([start, occ.length]);
   return out;
+}
+
+/// Tight bounds of the visible pixels inside [x0,x1) x [y0,y1), relative to (x0,y0).
+/// Same alpha threshold as the slicer, so "visible" means the same everywhere.
+function inkBox(data: Uint8ClampedArray, w: number, x0: number, y0: number, x1: number, y1: number): Rect["ink"] {
+  let minX = x1, minY = y1, maxX = -1, maxY = -1;
+  for (let y = y0; y < y1; y++) {
+    const off = y * w * 4;
+    for (let x = x0; x < x1; x++) {
+      if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        maxY = y; // rows ascend, so the last hit is the lowest
+      }
+    }
+  }
+  if (maxX < 0) return undefined; // empty frame: caller falls back to the cell
+  return { x: minX - x0, y: minY - y0, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
 /// Alpha-gutter slice: rows by transparent bands, then frames within each row.
@@ -75,7 +100,7 @@ export function slice(img: HTMLImageElement): Rect[][] {
         if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) colHas[x] = 1;
       }
     }
-    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
+    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, ink: inkBox(data, w, x0, y0, x1, y1) }));
     if (clip.length) clips.push(clip);
   }
   return clips;
@@ -184,6 +209,21 @@ export class Pet {
     requestAnimationFrame((n) => this.loop(n));
   }
 
+  /// Union of the frames' visible boxes in canvas pixels, at scale `s`.
+  private clipInkRect(clip: Rect[], s: number, W: number, H: number): { x: number; y: number; w: number; h: number } {
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const f of clip) {
+      const dw = f.w * s, dh = f.h * s;
+      const ox = (W - dw) / 2, oy = H - dh;
+      const ink = f.ink ?? { x: 0, y: 0, w: f.w, h: f.h };
+      l = Math.min(l, ox + ink.x * s);
+      t = Math.min(t, oy + ink.y * s);
+      r = Math.max(r, ox + (ink.x + ink.w) * s);
+      b = Math.max(b, oy + (ink.y + ink.h) * s);
+    }
+    return { x: l, y: t, w: r - l, h: b - t };
+  }
+
   private draw() {
     const { width: W, height: H } = this.canvas;
     this.ctx.clearRect(0, 0, W, H);
@@ -211,7 +251,10 @@ export class Pet {
     const s = fit >= 1 ? Math.floor(fit) : fit;
     const dw = r.w * s, dh = r.h * s;
     this.headroom = (H - dh) / H;
-    this.spriteRect = { x: (W - dw) / 2, y: H - dh, w: dw, h: dh };
+    // Hit region = union of the visible pixels of EVERY frame of this clip (each
+    // drawn centred and bottom-anchored like this one), so it hugs the pet but
+    // stays steady while the animation plays instead of changing per frame.
+    this.spriteRect = clip ? this.clipInkRect(clip, s, W, H) : { x: (W - dw) / 2, y: H - dh, w: dw, h: dh };
     this.ctx.drawImage(this.img, r.x, r.y, r.w, r.h, (W - dw) / 2, H - dh, dw, dh);
   }
 }
