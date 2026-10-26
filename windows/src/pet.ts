@@ -37,6 +37,9 @@ export interface Rect {
   /// top-left. The frame itself is a grid cell (whole row band x column run), so it
   /// usually has transparent padding; `ink` is what the pet really covers.
   ink?: { x: number; y: number; w: number; h: number };
+  /// Per source row of this frame: [minX, maxX] of the visible pixels relative to the
+  /// frame's left edge, or minX = -1 for an empty row. Drives the silhouette hit region.
+  rows?: Int16Array;
 }
 
 /// Contiguous runs of `true` in an occupancy array → [start, end) pairs.
@@ -70,6 +73,21 @@ function inkBox(data: Uint8ClampedArray, w: number, x0: number, y0: number, x1: 
   return { x: minX - x0, y: minY - y0, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
+/// Visible extent [minX, maxX] of every row of the frame (relative to x0); -1 when empty.
+function rowExtents(data: Uint8ClampedArray, w: number, x0: number, y0: number, x1: number, y1: number): Int16Array {
+  const out = new Int16Array((y1 - y0) * 2);
+  for (let y = y0; y < y1; y++) {
+    const off = y * w * 4;
+    let lo = -1, hi = -1;
+    for (let x = x0; x < x1; x++) {
+      if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) { if (lo < 0) lo = x - x0; hi = x - x0; }
+    }
+    out[(y - y0) * 2] = lo;
+    out[(y - y0) * 2 + 1] = hi;
+  }
+  return out;
+}
+
 /// Alpha-gutter slice: rows by transparent bands, then frames within each row.
 export function slice(img: HTMLImageElement): Rect[][] {
   const w = img.naturalWidth, h = img.naturalHeight;
@@ -101,10 +119,32 @@ export function slice(img: HTMLImageElement): Rect[][] {
         if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) colHas[x] = 1;
       }
     }
-    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, ink: inkBox(data, w, x0, y0, x1, y1) }));
+    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, ink: inkBox(data, w, x0, y0, x1, y1), rows: rowExtents(data, w, x0, y0, x1, y1) }));
     if (clip.length) clips.push(clip);
   }
   return clips;
+}
+
+/// Groups the per-row extents into bands about BAND_PX tall (canvas px) and returns one
+/// rect per band spanning the widest row in it. Empty rows are skipped.
+const BAND_PX = 4;
+function bandsOf(rows: Int16Array, dx: number, dy: number, s: number): { x: number; y: number; w: number; h: number }[] {
+  const n = rows.length / 2;
+  const step = Math.max(1, Math.round(BAND_PX / s));
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  for (let y0 = 0; y0 < n; y0 += step) {
+    const y1 = Math.min(n, y0 + step);
+    let lo = Infinity, hi = -1;
+    for (let y = y0; y < y1; y++) {
+      const a = rows[y * 2], b = rows[y * 2 + 1];
+      if (a < 0) continue;
+      if (a < lo) lo = a;
+      if (b > hi) hi = b;
+    }
+    if (hi < 0) continue;
+    out.push({ x: dx + lo * s, y: dy + y0 * s, w: (hi - lo + 1) * s, h: (y1 - y0) * s });
+  }
+  return out;
 }
 
 export class Pet {
@@ -120,6 +160,12 @@ export class Pet {
   headroom = 0;
   /// Last drawn sprite rect in backing-store pixels , the pet's true bounds.
   spriteRect: { x: number; y: number; w: number; h: number } | null = null;
+  /// Hit region that follows the pet's outline: horizontal bands (backing-store px) of the
+  /// CURRENT frame, each as wide as the visible pixels in it. Gaps inside a band (between the
+  /// legs, between arm and body) count as hit, so the pet is still easy to grab.
+  silhouette: { x: number; y: number; w: number; h: number }[] = [];
+  /// Called after every draw, so the hit region can follow the animation.
+  onFrame: (() => void) | null = null;
 
   /// True when a CSS-pixel point inside the canvas is on the pet: inside the
   /// sprite's box plus a small margin. The box (not per-pixel alpha) because
@@ -269,5 +315,7 @@ export class Pet {
     const dx = Math.round((W - dw) / 2), dy = Math.round(H - dh);
     this.spriteRect = clip ? this.clipInkRect(clip, s, W, H) : { x: dx, y: dy, w: dw, h: dh };
     this.ctx.drawImage(this.img, r.x, r.y, r.w, r.h, dx, dy, dw, dh);
+    this.silhouette = r.rows ? bandsOf(r.rows, dx, dy, s) : [{ x: dx, y: dy, w: dw, h: dh }];
+    this.onFrame?.();
   }
 }
