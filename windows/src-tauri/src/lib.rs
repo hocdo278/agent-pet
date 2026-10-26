@@ -2,6 +2,7 @@ pub mod cli;
 pub mod hooks;
 pub mod jcode;
 pub mod jcode_usage;
+pub mod limits;
 pub mod server;
 pub mod statemap;
 pub mod transcript;
@@ -117,19 +118,24 @@ fn tray_labels(code: &str) -> (&'static str, &'static str, &'static str, &'stati
     }
 }
 
+// These touch config files, jcode's on a `\\wsl.localhost` share, and enabling
+// jcode may run `wsl.exe`. Sync commands run on the main thread and would freeze
+// the UI while WSL boots, so they go to the blocking pool.
 #[tauri::command]
-fn list_agents() -> Vec<hooks::AgentInfo> {
-    hooks::catalog()
+async fn list_agents() -> Vec<hooks::AgentInfo> {
+    tauri::async_runtime::spawn_blocking(hooks::catalog).await.unwrap_or_default()
 }
 
 #[tauri::command]
-fn is_installed(kind: String) -> bool {
-    hooks::is_installed(&kind)
+async fn is_installed(kind: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || hooks::is_installed(&kind)).await.unwrap_or(false)
 }
 
 #[tauri::command]
-fn toggle_install(kind: String) -> Result<bool, String> {
-    hooks::toggle(&kind)
+async fn toggle_install(kind: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || hooks::toggle(&kind))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Window creation MUST NOT run inside a sync command / menu callback on
@@ -184,6 +190,15 @@ fn play_sound(event: String) {
     }
     #[cfg(not(windows))]
     let _ = event; // Linux build keeps the WebAudio chime (see main.ts)
+}
+
+/// Subscription limits for the Care tab and the pet's "limit low" mood. Only
+/// percentages and reset times cross into the webview, never the token.
+#[tauri::command]
+async fn get_limits() -> Vec<limits::LimitProvider> {
+    // default_paths() only reads a cache (no wsl.exe), so it is cheap; the file
+    // reads themselves run on the blocking pool inside probe_claude.
+    limits::probe_claude(limits::default_paths()).await.into_iter().collect()
 }
 
 #[tauri::command]
@@ -451,7 +466,8 @@ pub fn run() {
             open_popover,
             log_debug,
             set_hit_rect,
-            play_sound
+            play_sound,
+            get_limits
         ])
         .setup(|app| {
             server::start(app.handle().clone());
