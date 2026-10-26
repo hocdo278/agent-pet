@@ -3,6 +3,8 @@ name: Windows tests
 # Runs the Rust unit tests of the Tauri app on Windows (the build workflow only
 # compiles), so #[cfg(windows)] code and the WSL/UNC helpers are covered too.
 on:
+  push:
+    branches: [ci-check/cargo-test]
   workflow_dispatch:
 
 jobs:
