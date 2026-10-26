@@ -173,7 +173,7 @@ fn mouse_down() -> bool {
 /// window ourselves has no such limit; the drop-time clamp in the background
 /// loop still keeps the sprite itself on a screen.
 #[tauri::command]
-fn drag_pet(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+fn drag_pet(#[cfg_attr(not(windows), allow(unused_variables))] app: tauri::AppHandle, window: tauri::WebviewWindow) {
     // The window that was pressed (main pet or a split `pet-<projectId>`), not a
     // hard-coded "pet": otherwise pressing a project pet moved the main one.
     let win = window;
