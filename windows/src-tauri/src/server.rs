@@ -289,14 +289,18 @@ fn handle_event(app: &AppHandle, body: &str) {
         let sess = tok_session.clone();
         let proj = tok_project.clone();
         let path = transcript.clone();
+        // Events for one path are coalesced: a burst runs one scan plus at most one
+        // follow-up, never several concurrent full reads of the same file/DB.
         std::thread::spawn(move || {
-            if let Some(tokens) = crate::antigravity_usage::new_usage_tokens(&path) {
-                if tokens > 0 {
+            crate::antigravity_usage::coalesce(
+                &path,
+                || crate::antigravity_usage::new_usage_tokens(&path),
+                |tokens| {
                     let _ = app2.emit("agent-tokens", serde_json::json!({
                         "agent": "antigravity", "session": sess, "project": proj, "tokens": tokens,
                     }));
-                }
-            }
+                },
+            );
         });
     }
 

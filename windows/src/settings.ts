@@ -16,6 +16,7 @@ import * as sync from "./sync";
 import * as history from "./history";
 import * as limits from "./limits";
 import { agentLabel } from "./state";
+import { tokenString } from "./statscard";
 
 // ------------------------------------------------------------- segmented ----
 // macOS-style segmented controls: <span class="seg" data-key data-default>.
@@ -128,9 +129,10 @@ function renderCare() {
   const agentsEl = document.getElementById("care-agents");
   if (agentsEl) {
     const rows = usage.byAgent();
-    agentsEl.innerHTML = rows.length
-      ? rows.map((a) => `<div class="care-charthead"><span>${esc(agentLabel(a.agent))}</span><span class="dim">${fmtNum(a.today)} · ${fmtNum(a.month)}</span></div>`).join("")
-      : `<div class="care-charthead"><span class="dim">—</span></div>`;
+    // Compact numbers (1.2M / 34k) like the stats card; hidden when empty.
+    agentsEl.innerHTML = rows.map((a) => `<div class="care-charthead"><span>${esc(agentLabel(a.agent))}</span><span class="dim">${tokenString(a.today)} · ${tokenString(a.month)}</span></div>`).join("");
+    const head = document.getElementById("care-agents-head");
+    if (head) head.hidden = rows.length === 0;
   }
   setTxt("care-streak", String(s.streakDays));
   setTxt("care-lifetime", fmtNum(s.totalTokens));
