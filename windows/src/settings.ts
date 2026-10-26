@@ -190,6 +190,8 @@ function renderLimits(providers: limits.LimitProvider[]) {
     box.onchange = () => {
       limits.setVisible(box.dataset.limit!, box.checked);
       renderLimits(limits.cached());
+      // Turned back on after being off: the cache may be old or empty.
+      if (box.checked) void limits.refresh().then(renderLimits);
     };
   });
 }
@@ -1211,7 +1213,7 @@ function applyStatic() {
   set("tab-bubble", "Bubble");
   set("tab-about", "About");
   set("t-limits-head", "Subscription limits");
-  set("t-limits-help", "Hidden providers stay out of the stats card and don't make your pet anxious.");
+  set("t-limits-help", "Hidden providers stay out of Limits and don't make your pet anxious. Hiding every provider stops the sign-in read and the usage request.");
   // general
   set("t-lang", "Language");
   set("t-lang2", "Language");
