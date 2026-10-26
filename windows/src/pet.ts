@@ -30,7 +30,16 @@ const STATE_FPS: Record<string, number> = {
   registered: 3,
 };
 
-export interface Rect { x: number; y: number; w: number; h: number }
+export interface Rect {
+  x: number; y: number; w: number; h: number;
+  /// Tight box of the visible (non-transparent) pixels, relative to this frame's
+  /// top-left. The frame itself is a grid cell (whole row band x column run), so it
+  /// usually has transparent padding; `ink` is what the pet really covers.
+  ink?: { x: number; y: number; w: number; h: number };
+  /// Per source row of this frame: [minX, maxX] of the visible pixels relative to the
+  /// frame's left edge, or minX = -1 for an empty row. Drives the silhouette hit region.
+  rows?: Int16Array;
+}
 
 /// Contiguous runs of `true` in an occupancy array → [start, end) pairs.
 function segments(occ: Uint8Array): Array<[number, number]> {
@@ -41,6 +50,40 @@ function segments(occ: Uint8Array): Array<[number, number]> {
     else if (!occ[i] && start >= 0) { out.push([start, i]); start = -1; }
   }
   if (start >= 0) out.push([start, occ.length]);
+  return out;
+}
+
+/// Tight bounds of the visible pixels inside [x0,x1) x [y0,y1), relative to (x0,y0).
+/// Same alpha threshold as the slicer, so "visible" means the same everywhere.
+function inkBox(data: Uint8ClampedArray, w: number, x0: number, y0: number, x1: number, y1: number): Rect["ink"] {
+  let minX = x1, minY = y1, maxX = -1, maxY = -1;
+  for (let y = y0; y < y1; y++) {
+    const off = y * w * 4;
+    for (let x = x0; x < x1; x++) {
+      if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        maxY = y; // rows ascend, so the last hit is the lowest
+      }
+    }
+  }
+  if (maxX < 0) return undefined; // empty frame: caller falls back to the cell
+  return { x: minX - x0, y: minY - y0, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+/// Visible extent [minX, maxX] of every row of the frame (relative to x0); -1 when empty.
+function rowExtents(data: Uint8ClampedArray, w: number, x0: number, y0: number, x1: number, y1: number): Int16Array {
+  const out = new Int16Array((y1 - y0) * 2);
+  for (let y = y0; y < y1; y++) {
+    const off = y * w * 4;
+    let lo = -1, hi = -1;
+    for (let x = x0; x < x1; x++) {
+      if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) { if (lo < 0) lo = x - x0; hi = x - x0; }
+    }
+    out[(y - y0) * 2] = lo;
+    out[(y - y0) * 2 + 1] = hi;
+  }
   return out;
 }
 
@@ -75,10 +118,32 @@ export function slice(img: HTMLImageElement): Rect[][] {
         if (data[off + x * 4 + 3] > ALPHA_THRESHOLD) colHas[x] = 1;
       }
     }
-    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
+    const clip = segments(colHas).map(([x0, x1]) => ({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, ink: inkBox(data, w, x0, y0, x1, y1), rows: rowExtents(data, w, x0, y0, x1, y1) }));
     if (clip.length) clips.push(clip);
   }
   return clips;
+}
+
+/// Groups the per-row extents into bands about BAND_PX tall (canvas px) and returns one
+/// rect per band spanning the widest row in it. Empty rows are skipped.
+const BAND_PX = 4;
+function bandsOf(rows: Int16Array, dx: number, dy: number, s: number): { x: number; y: number; w: number; h: number }[] {
+  const n = rows.length / 2;
+  const step = Math.max(1, Math.round(BAND_PX / s));
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  for (let y0 = 0; y0 < n; y0 += step) {
+    const y1 = Math.min(n, y0 + step);
+    let lo = Infinity, hi = -1;
+    for (let y = y0; y < y1; y++) {
+      const a = rows[y * 2], b = rows[y * 2 + 1];
+      if (a < 0) continue;
+      if (a < lo) lo = a;
+      if (b > hi) hi = b;
+    }
+    if (hi < 0) continue;
+    out.push({ x: dx + lo * s, y: dy + y0 * s, w: (hi - lo + 1) * s, h: (y1 - y0) * s });
+  }
+  return out;
 }
 
 export class Pet {
@@ -95,6 +160,12 @@ export class Pet {
   headroom = 0;
   /// Last drawn sprite rect in backing-store pixels , the pet's true bounds.
   spriteRect: { x: number; y: number; w: number; h: number } | null = null;
+  /// Hit region that follows the pet's outline: horizontal bands (backing-store px) of the
+  /// CURRENT frame, each as wide as the visible pixels in it. Gaps inside a band (between the
+  /// legs, between arm and body) count as hit, so the pet is still easy to grab.
+  silhouette: { x: number; y: number; w: number; h: number }[] = [];
+  /// Called after every draw, so the hit region can follow the animation.
+  onFrame: (() => void) | null = null;
 
   /// True when a CSS-pixel point inside the canvas hits the SPRITE (alpha
   /// test), so clicks on the empty area around the pet don't drag the window.
@@ -184,6 +255,21 @@ export class Pet {
     requestAnimationFrame((n) => this.loop(n));
   }
 
+  /// Union of the frames' visible boxes in canvas pixels, at scale `s`.
+  private clipInkRect(clip: Rect[], s: number, W: number, H: number): { x: number; y: number; w: number; h: number } {
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const f of clip) {
+      const dw = f.w * s, dh = f.h * s;
+      const ox = Math.round((W - dw) / 2), oy = Math.round(H - dh);
+      const ink = f.ink ?? { x: 0, y: 0, w: f.w, h: f.h };
+      l = Math.min(l, ox + ink.x * s);
+      t = Math.min(t, oy + ink.y * s);
+      r = Math.max(r, ox + (ink.x + ink.w) * s);
+      b = Math.max(b, oy + (ink.y + ink.h) * s);
+    }
+    return { x: l, y: t, w: r - l, h: b - t };
+  }
+
   private draw() {
     const { width: W, height: H } = this.canvas;
     this.ctx.clearRect(0, 0, W, H);
@@ -211,12 +297,17 @@ export class Pet {
     const s = fit >= 1 ? Math.floor(fit) : fit;
     const dw = r.w * s, dh = r.h * s;
     this.headroom = (H - dh) / H;
+    // Hit region = union of the visible pixels of EVERY frame of this clip (each
+    // drawn centred and bottom-anchored like this one), so it hugs the pet but
+    // stays steady while the animation plays instead of changing per frame.
     // Whole pixels only: an odd-width frame centred in an even canvas (or the
     // reverse) lands on x.5, and with smoothing off the browser then doubles or
-    // drops pixel columns for that frame only (visible as noise, e.g. when a kneel
-    // clip stands up: a 103px frame at x=28.5). The hit rect uses the same value.
+    // drops pixel columns for that frame only (visible as noise, e.g. when the
+    // kneel clip stands up: 103px frame at x=28.5). The same value feeds the hit rect.
     const dx = Math.round((W - dw) / 2), dy = Math.round(H - dh);
-    this.spriteRect = { x: dx, y: dy, w: dw, h: dh };
+    this.spriteRect = clip ? this.clipInkRect(clip, s, W, H) : { x: dx, y: dy, w: dw, h: dh };
     this.ctx.drawImage(this.img, r.x, r.y, r.w, r.h, dx, dy, dw, dh);
+    this.silhouette = r.rows ? bandsOf(r.rows, dx, dy, s) : [{ x: dx, y: dy, w: dw, h: dh }];
+    this.onFrame?.();
   }
 }
