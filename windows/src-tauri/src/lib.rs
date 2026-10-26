@@ -89,6 +89,20 @@ fn set_hit_rect(app: tauri::AppHandle, x: f64, y: f64, w: f64, h: f64) {
     }
 }
 
+/// The separate clickable parts (bubble, sprite) in physical px, window-relative.
+/// Click-through uses these; the union in `HitRect` is only the visible bounds.
+fn hit_parts() -> &'static Mutex<Vec<(f64, f64, f64, f64)>> {
+    static P: std::sync::OnceLock<Mutex<Vec<(f64, f64, f64, f64)>>> = std::sync::OnceLock::new();
+    P.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[tauri::command]
+fn set_hit_parts(parts: Vec<[f64; 4]>) {
+    if let Ok(mut p) = hit_parts().lock() {
+        *p = parts.into_iter().map(|[x, y, w, h]| (x, y, w, h)).collect();
+    }
+}
+
 fn lang_file() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|d| d.join("AgentPet").join("lang"))
 }
@@ -618,6 +632,7 @@ pub fn run() {
             stats_resized,
             log_debug,
             set_hit_rect,
+            set_hit_parts,
             drag_pet,
             play_sound,
             get_limits
@@ -680,11 +695,18 @@ pub fn run() {
                             let rect = handle
                                 .try_state::<Mutex<HitRect>>()
                                 .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)));
+                            let parts = hit_parts().lock().map(|p| p.clone()).unwrap_or_default();
                             let inside = match rect {
                                 Some((x, y, w, h)) if w > 0.0 => {
                                     let rx = cur.x - wp.x as f64;
                                     let ry = cur.y - wp.y as f64;
-                                    rx >= x && rx <= x + w && ry >= y && ry <= y + h
+                                    if parts.is_empty() {
+                                        rx >= x && rx <= x + w && ry >= y && ry <= y + h
+                                    } else {
+                                        // Any part counts; the empty space between a wide bubble and
+                                        // a narrow pet is click-through.
+                                        parts.iter().any(|&(px, py, pw, ph)| rx >= px && rx <= px + pw && ry >= py && ry <= py + ph)
+                                    }
                                 }
                                 _ => true, // no rect yet , stay interactive
                             };

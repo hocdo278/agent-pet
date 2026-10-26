@@ -490,13 +490,19 @@ function reportHitRect() {
   } else {
     rects.push({ left: cr.left, top: cr.top, right: cr.right, bottom: cr.bottom });
   }
+  // The union below stays the "visible bounds" (keeps the pet on screen). Clicks
+  // use the PARTS (bubble, sprite) separately: a wide bubble above a narrow pet
+  // otherwise makes one big box that also grabs the empty corners beside the pet.
+  const pad = 4; // px of slack so grabbing right at the edge still works
+  const parts = rects.map((r) => [(r.left - pad) * d, (r.top - pad) * d, (r.right - r.left + 2 * pad) * d, (r.bottom - r.top + 2 * pad) * d]);
   const left = Math.min(...rects.map((r) => r.left));
   const top = Math.min(...rects.map((r) => r.top));
   const right = Math.max(...rects.map((r) => r.right));
   const bottom = Math.max(...rects.map((r) => r.bottom));
-  const sig = [left, top, right, bottom].map((v) => Math.round(v)).join(",");
+  const sig = [left, top, right, bottom, ...parts.flat()].map((v) => Math.round(v)).join(",");
   if (sig === lastHitSig) return;
   lastHitSig = sig;
+  invoke("set_hit_parts", { parts }).catch(() => {});
   invoke("set_hit_rect", { x: left * d, y: top * d, w: (right - left) * d, h: (bottom - top) * d })
     .catch((err) => invoke("log_debug", { msg: `set_hit_rect failed: ${err}` }).catch(() => {}));
 }
