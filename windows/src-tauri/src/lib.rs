@@ -79,12 +79,24 @@ fn write_pos(x: i32, y: i32) {
 /// Report the pet's opaque rectangle (physical px, window-relative) so empty
 /// transparent areas of the overlay let clicks pass through to apps below.
 #[tauri::command]
-fn set_hit_rect(app: tauri::AppHandle, x: f64, y: f64, w: f64, h: f64) {
+fn set_hit_rect(app: tauri::AppHandle, window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
+    // Also remembered per window label, so the stats card can anchor on the pet
+    // that opened it (split pets each have their own rect).
+    if let Ok(mut m) = hit_rects().lock() {
+        m.insert(window.label().to_string(), (x, y, w, h));
+    }
     if let Some(state) = app.try_state::<Mutex<HitRect>>() {
         if let Ok(mut r) = state.lock() {
             *r = HitRect { x, y, w, h };
         }
     }
+}
+
+/// Last reported hit rect (x, y, w, h in physical px, window-relative) by window label.
+fn hit_rects() -> &'static Mutex<std::collections::HashMap<String, (f64, f64, f64, f64)>> {
+    static M: std::sync::OnceLock<Mutex<std::collections::HashMap<String, (f64, f64, f64, f64)>>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
 fn lang_file() -> Option<std::path::PathBuf> {
@@ -161,8 +173,10 @@ fn mouse_down() -> bool {
 /// window ourselves has no such limit; the drop-time clamp in the background
 /// loop still keeps the sprite itself on a screen.
 #[tauri::command]
-fn drag_pet(app: tauri::AppHandle) {
-    let Some(win) = app.get_webview_window("pet") else { return };
+fn drag_pet(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+    // The window that was pressed (main pet or a split `pet-<projectId>`), not a
+    // hard-coded "pet": otherwise pressing a project pet moved the main one.
+    let win = window;
     #[cfg(windows)]
     {
         let (Ok(c0), Ok(w0)) = (app.cursor_position(), win.outer_position()) else {
@@ -215,7 +229,9 @@ fn open_settings_impl(app: tauri::AppHandle) {
 /// percentages and reset times cross into the webview, never the token.
 #[tauri::command]
 async fn get_limits() -> Vec<limits::LimitProvider> {
-    limits::probe_claude(&limits::default_paths()).await.into_iter().collect()
+    // default_paths() only reads a cache (no wsl.exe), so it is cheap; the file
+    // reads themselves run on the blocking pool inside probe_claude.
+    limits::probe_claude(limits::default_paths()).await.into_iter().collect()
 }
 
 #[tauri::command]
@@ -393,16 +409,33 @@ fn url_component(s: &str) -> String {
         .collect()
 }
 
-/// Hangs the stats card off the pet window like the macOS popover (below the
-/// pet when it fits, else above, else beside it) and tells the card where its
-/// arrow goes. Also re-run when the card resizes, so it never grows over the pet.
+/// Hangs the stats card off a pet window like the macOS popover (above the pet
+/// when it fits, else below, else beside it; see `geometry::place_card`) and
+/// tells the card where its arrow goes. Also re-run when the card resizes, so it
+/// never grows over the pet.
 /// Height (logical px) the card's content wants, reported by stats.ts.
 static STATS_WANT_H: Mutex<Option<f64>> = Mutex::new(None);
+/// Label of the pet window the card is anchored on (the one that was right-clicked).
+static STATS_ANCHOR: Mutex<String> = Mutex::new(String::new());
 
 fn place_stats(app: &tauri::AppHandle, win: &tauri::WebviewWindow, base_h: f64) {
-    let Some(pet) = app.get_webview_window("pet") else { return };
+    let anchor = STATS_ANCHOR.lock().map(|g| g.clone()).unwrap_or_default();
+    let Some(pet) = app
+        .get_webview_window(&anchor)
+        .or_else(|| app.get_webview_window("pet"))
+    else { return };
     let (Ok(pp), Ok(ps)) = (pet.outer_position(), pet.outer_size()) else { return };
-    let sf = win.scale_factor().unwrap_or(1.0);
+    let centre = (pp.x + ps.width as i32 / 2, pp.y + ps.height as i32 / 2);
+    // Scale of the monitor the card will be on (the pet's), not of the one the
+    // stats window sits on right now: on mixed-DPI setups the first placement
+    // would otherwise be sized for the wrong monitor.
+    let target_mon = app
+        .monitor_from_point(centre.0 as f64, centre.1 as f64)
+        .ok()
+        .flatten()
+        .or_else(|| pet.current_monitor().ok().flatten());
+    let win_sf = win.scale_factor().unwrap_or(1.0);
+    let sf = target_mon.as_ref().map(|m| m.scale_factor()).unwrap_or(win_sf);
     let want_h = STATS_WANT_H.lock().ok().and_then(|g| *g).unwrap_or(base_h);
     // Windows keeps an invisible resize border around undecorated windows
     // (outer is 16 px wider than inner here); place by the outer rect.
@@ -410,22 +443,21 @@ fn place_stats(app: &tauri::AppHandle, win: &tauri::WebviewWindow, base_h: f64) 
         (Ok(o), Ok(i)) => ((o.width as i32 - i.width as i32).max(0), (o.height as i32 - i.height as i32).max(0)),
         _ => (0, 0),
     };
+    // The frame was measured at the window's current scale: convert to the target's.
+    let k = if win_sf > 0.0 { sf / win_sf } else { 1.0 };
+    let frame = ((frame.0 as f64 * k).round() as i32, (frame.1 as f64 * k).round() as i32);
     let size = ((316.0 * sf).round() as i32 + frame.0, (want_h * sf).round() as i32 + frame.1);
     let pet_rect = (pp.x, pp.y, ps.width as i32, ps.height as i32);
-    let centre = (pp.x + ps.width as i32 / 2, pp.y + ps.height as i32 / 2);
     // Anchor on what is drawn (sprite + bubble, from the click-through hit
     // rect), not the whole 260x320 window, so the card hugs the pet.
-    let pet_rect = app
-        .try_state::<Mutex<HitRect>>()
-        .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)))
+    let pet_rect = hit_rects()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(pet.label()).copied())
         .filter(|&(_, _, w, h)| w > 0.0 && h > 0.0)
         .map(|(x, y, w, h)| (pp.x + x as i32, pp.y + y as i32, w as i32, h as i32))
         .unwrap_or(pet_rect);
-    let area = app
-        .monitor_from_point(centre.0 as f64, centre.1 as f64)
-        .ok()
-        .flatten()
-        .or_else(|| pet.current_monitor().ok().flatten())
+    let area = target_mon
         .map(|m| {
             let wa = m.work_area();
             (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32)
@@ -467,7 +499,8 @@ fn show_transient(app: &tauri::AppHandle, label: &str, url: &str, base_h: f64, e
                 .transparent(true)
                 // Without this Windows draws a 1px DWM border around the whole
                 // (mostly transparent) window: a white line floating above the card.
-                .shadow(false)
+                // Only the stats card needs it; the popover keeps its shadow.
+                .shadow(label != "stats")
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .resizable(false)
@@ -522,8 +555,11 @@ fn show_transient(app: &tauri::AppHandle, label: &str, url: &str, base_h: f64, e
 }
 
 #[tauri::command]
-async fn open_stats(app: tauri::AppHandle, pet: Option<String>) {
-    dlog("open_stats called");
+async fn open_stats(app: tauri::AppHandle, window: tauri::WebviewWindow, pet: Option<String>) {
+    // Anchor the card on the pet window that was right-clicked (main or split).
+    if let Ok(mut a) = STATS_ANCHOR.lock() {
+        *a = window.label().to_string();
+    }
     std::thread::spawn(move || show_stats(&app, pet));
 }
 

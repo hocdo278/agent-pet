@@ -437,6 +437,19 @@ listen("check-updates", async () => {
   }
 });
 
+// Last interactive region in CSS px (set by reportHitRect below). Where the OS
+// can't make the transparent part click-through (Wayland: cursor_position
+// fails, so the whole window stays interactive) a press on empty space must
+// still do nothing, so the document-wide handlers check it. Same region Rust
+// uses on Windows (sprite bounds + visible bubble), so the gap between bubble
+// and sprite still counts, unlike the sprite-only alpha test `pet.hitTest`.
+let hitCss: { left: number; top: number; right: number; bottom: number } | null = null;
+function inHitRect(e: MouseEvent): boolean {
+  const r = hitCss;
+  if (!r) return true; // not reported yet: stay interactive
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
 // --- interactions ------------------------------------------------------------
 // Rust makes the window click-through outside the pet's hit rect (sprite box
 // + bubble), so any left press that reaches this document is on the pet.
@@ -448,6 +461,7 @@ document.addEventListener("mousedown", async (e) => {
   if (e.button !== 0) return;
   // Bubble controls (fold, carousel dots, dismiss, Warp-focus rows) keep their clicks.
   if ((e.target as HTMLElement).closest("button, a, input, .car-dot, .focusable, [data-nodrag]")) return;
+  if (!inHitRect(e)) return;
   emit("popover-close", null);
   await invoke("drag_pet");
 });
@@ -455,6 +469,7 @@ document.addEventListener("mousedown", async (e) => {
 // opens the quick popover.
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
+  if (!inHitRect(e)) return;
   invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
 });
 
@@ -488,6 +503,7 @@ function reportHitRect() {
   const top = Math.min(...rects.map((r) => r.top));
   const right = Math.max(...rects.map((r) => r.right));
   const bottom = Math.max(...rects.map((r) => r.bottom));
+  hitCss = { left, top, right, bottom };
   const sig = [left, top, right, bottom].map((v) => Math.round(v)).join(",");
   if (sig === lastHitSig) return;
   lastHitSig = sig;
