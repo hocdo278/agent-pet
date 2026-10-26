@@ -331,6 +331,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// How long `wsl.exe` gets before it is killed. Booting a cold VM takes a few seconds.
+#[cfg_attr(not(windows), allow(dead_code))]
 const WSL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// `%APPDATA%\AgentPet\jcode_wsl_home`: one line, the UNC home of the WSL distro
@@ -387,6 +388,7 @@ pub fn probe_jcode_wsl() {
 
 /// Runs `cmd` with stdout captured and kills it after `timeout`. `None` on a
 /// spawn error, a timeout, or a non-zero exit. Std only, so it is unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn run_with_timeout(mut cmd: std::process::Command, timeout: Duration) -> Option<Vec<u8>> {
     use std::io::Read;
     use std::process::Stdio;
