@@ -1385,6 +1385,9 @@ function initBackup() {
         t("Your current data will be replaced. Export first if you want to keep it."));
       if (!ok) return;
       const n = backup.applyBackup(parsed);
+      // The tray reads its language from a file Rust writes on set_lang, which
+      // otherwise only happens when Settings opens: push the restored one now.
+      await invoke("set_lang", { code: getLang() }).catch(() => {});
       say(`${t("Restored")}: ${n} ${t("items")}. ${t("Restarting…")}`);
       // Every window caches state in memory: relaunch so they all reload it.
       setTimeout(() => { void relaunch(); }, 800);
