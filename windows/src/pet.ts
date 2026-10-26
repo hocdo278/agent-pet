@@ -222,7 +222,7 @@ export class Pet {
     let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
     for (const f of clip) {
       const dw = f.w * s, dh = f.h * s;
-      const ox = (W - dw) / 2, oy = H - dh;
+      const ox = Math.round((W - dw) / 2), oy = Math.round(H - dh);
       const ink = f.ink ?? { x: 0, y: 0, w: f.w, h: f.h };
       l = Math.min(l, ox + ink.x * s);
       t = Math.min(t, oy + ink.y * s);
@@ -262,7 +262,12 @@ export class Pet {
     // Hit region = union of the visible pixels of EVERY frame of this clip (each
     // drawn centred and bottom-anchored like this one), so it hugs the pet but
     // stays steady while the animation plays instead of changing per frame.
-    this.spriteRect = clip ? this.clipInkRect(clip, s, W, H) : { x: (W - dw) / 2, y: H - dh, w: dw, h: dh };
-    this.ctx.drawImage(this.img, r.x, r.y, r.w, r.h, (W - dw) / 2, H - dh, dw, dh);
+    // Whole pixels only: an odd-width frame centred in an even canvas (or the
+    // reverse) lands on x.5, and with smoothing off the browser then doubles or
+    // drops pixel columns for that frame only (visible as noise, e.g. when the
+    // kneel clip stands up: 103px frame at x=28.5). The same value feeds the hit rect.
+    const dx = Math.round((W - dw) / 2), dy = Math.round(H - dh);
+    this.spriteRect = clip ? this.clipInkRect(clip, s, W, H) : { x: dx, y: dy, w: dw, h: dh };
+    this.ctx.drawImage(this.img, r.x, r.y, r.w, r.h, dx, dy, dw, dh);
   }
 }
