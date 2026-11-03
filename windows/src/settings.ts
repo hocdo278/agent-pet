@@ -12,12 +12,13 @@ import { slice, type Rect } from "./pet";
 import * as care from "./care";
 import * as usage from "./usage";
 import * as projectpets from "./projectpets";
-import * as projectnames from "./projectnames";
 import * as backup from "./backup";
+import * as projectnames from "./projectnames";
 import * as sync from "./sync";
 import * as history from "./history";
 import * as limits from "./limits";
 import { agentLabel } from "./state";
+import { tokenString } from "./statscard";
 
 // ------------------------------------------------------------- segmented ----
 // macOS-style segmented controls: <span class="seg" data-key data-default>.
@@ -130,9 +131,10 @@ function renderCare() {
   const agentsEl = document.getElementById("care-agents");
   if (agentsEl) {
     const rows = usage.byAgent();
-    agentsEl.innerHTML = rows.length
-      ? rows.map((a) => `<div class="care-charthead"><span>${esc(agentLabel(a.agent))}</span><span class="dim">${fmtNum(a.today)} · ${fmtNum(a.month)}</span></div>`).join("")
-      : `<div class="care-charthead"><span class="dim">—</span></div>`;
+    // Compact numbers (1.2M / 34k) like the stats card; hidden when empty.
+    agentsEl.innerHTML = rows.map((a) => `<div class="care-charthead"><span>${esc(agentLabel(a.agent))}</span><span class="dim">${tokenString(a.today)} · ${tokenString(a.month)}</span></div>`).join("");
+    const head = document.getElementById("care-agents-head");
+    if (head) head.hidden = rows.length === 0;
   }
   setTxt("care-streak", String(s.streakDays));
   setTxt("care-lifetime", fmtNum(s.totalTokens));
@@ -200,6 +202,8 @@ function renderLimits(providers: limits.LimitProvider[]) {
     box.onchange = () => {
       limits.setVisible(box.dataset.limit!, box.checked);
       renderLimits(limits.cached());
+      // Turned back on after being off: the cache may be old or empty.
+      if (box.checked) void limits.refresh().then(renderLimits);
     };
   });
 }
@@ -667,7 +671,7 @@ const MSG_AGENTS: [string, string][] = [
   ["all", "All agents"], ["claude", "Claude Code"], ["codex", "Codex"], ["gemini", "Gemini CLI"],
   ["cursor", "Cursor"], ["opencode", "opencode"], ["windsurf", "Windsurf"],
   ["antigravity", "Antigravity"], ["copilot", "GitHub Copilot"], ["kiro", "Kiro CLI"],
-  ["grok", "Grok Build"], ["jcode", "jcode"],
+  ["jcode", "jcode"],
 ];
 
 function initBubble() {
@@ -1261,7 +1265,7 @@ function applyStatic() {
   set("t-care-agents", "By agent");
   set("t-care-agents-sub", "Today · Month");
   set("t-limits-head", "Subscription limits");
-  set("t-limits-help", "Hidden providers stay out of the stats card and don't make your pet anxious.");
+  set("t-limits-help", "Hidden providers stay out of Limits and don't make your pet anxious. Hiding every provider stops the sign-in read and the usage request.");
   // general
   set("t-lang", "Language");
   set("t-lang2", "Language");
@@ -1324,11 +1328,6 @@ function applyStatic() {
   set("t-reactive-sub", "The pet reacts to token usage, streaks, hunger, and busy sessions.");
   set("t-split", "Split pets by project");
   set("t-split-sub", "Give a project its own pet window; the rest stay on the main pet.");
-  set("t-backup", "Backup");
-  set("t-backup-export", "Export data");
-  set("t-backup-export-sub", "Save your pet level, pets and settings to a file.");
-  set("t-backup-import", "Import data");
-  set("t-backup-import-sub", "Restore from a file. This replaces your current data.");
   set("t-projnames", "Project names");
   set("t-projnames-sub", "Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name.");
   set("t-display", "Display");
@@ -1403,6 +1402,11 @@ function applyStatic() {
   set("t-ob-pet", "Choose a pet");
   set("t-ob-go", "Get started");
   set("t-author", "Author");
+  set("t-backup", "Backup");
+  set("t-backup-export", "Export data");
+  set("t-backup-export-sub", "Save your pet level, pets and settings to a file.");
+  set("t-backup-import", "Import data");
+  set("t-backup-import-sub", "Restore from a file. This replaces your current data.");
   set("t-version2", "Version");
   // bottom bar + demo panel
   set("t-lp", "Live preview");
@@ -1463,6 +1467,11 @@ function initBackup() {
     const f = pick.files?.[0];
     pick.value = "";
     if (!f) return;
+    // A wrong file (video, disk image) must not freeze Settings in f.text().
+    if (f.size > 20 * 1024 * 1024) {
+      say(`${t("Import failed")}: ${t("File too large")}`, true);
+      return;
+    }
     try {
       const parsed = backup.parseBackup(await f.text());
       const when = parsed.exportedAt ? parsed.exportedAt.slice(0, 16).replace("T", " ") : "?";
@@ -1471,6 +1480,12 @@ function initBackup() {
         t("Your current data will be replaced. Export first if you want to keep it."));
       if (!ok) return;
       const n = backup.applyBackup(parsed);
+      // The tray reads its language from a file Rust writes on set_lang, which
+      // otherwise only happens when Settings opens: push the restored one now.
+      // getLang() is this window's startup cache, not the restored value.
+      const restored = localStorage.getItem("ap_lang");
+      const code = restored === "en" || restored === "vi" || restored === "zh" || restored === "zh-TW" ? restored : getLang();
+      await invoke("set_lang", { code }).catch(() => {});
       say(`${t("Restored")}: ${n} ${t("items")}. ${t("Restarting…")}`);
       // Every window caches state in memory: relaunch so they all reload it.
       setTimeout(() => { void relaunch(); }, 800);

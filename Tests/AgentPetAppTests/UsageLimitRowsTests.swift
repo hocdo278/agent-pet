@@ -5,8 +5,8 @@ import XCTest
 @MainActor
 final class UsageLimitRowsTests: XCTestCase {
 
-    /// `left: nil` = a provider with no limit window (only text lines).
     private func provider(_ id: String, left: Double?) -> OpenUsageClient.Provider {
+        // No window means no limit, same as the old nil fractionLeft.
         OpenUsageClient.Provider(id: id, displayName: id, plan: nil, todayLabel: nil,
                                  windows: left.map { [.init(label: "Session", fractionLeft: $0)] } ?? [])
     }

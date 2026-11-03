@@ -110,6 +110,8 @@ struct CareTabView: View {
                 LabeledContent("Total sessions", value: "\(care.current.totalMeals)")
             }
 
+            AgentUsageSection()
+
             Section {
                 let unlocked = care.achievements
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 14) {
@@ -227,6 +229,15 @@ struct CareTabView: View {
                              ? "Read directly from your Claude Code / Codex sign-ins. None found yet."
                              : "Read directly from your Claude Code / Codex sign-ins.")
                             .font(.caption).foregroundStyle(.secondary)
+                        // Inside this row, not a row of its own: a Form row added or
+                        // removed when `lost` flips kept its old height and drew over
+                        // the toggle below it.
+                        if usage.lost {
+                            Label("OpenUsage isn't responding, so the providers only it supplies are hidden.",
+                                  systemImage: "exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                     if !probe.providers.isEmpty {
